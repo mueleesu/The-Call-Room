@@ -1,0 +1,978 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROOM</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      color: #e8e8e8;
+      font-family: "Courier New", monospace;
+      overflow: hidden;
+    }
+
+    body {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    canvas.bg {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      opacity: 0.92;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .room {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      max-width: 720px;
+      min-height: 420px;
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: rgba(0,0,0,0.95);
+      box-shadow: 0 0 40px rgba(255,255,255,0.03) inset;
+      transition: transform 0.08s linear, filter 0.08s linear, border-color 0.2s ease;
+    }
+
+    .room.unstable {
+      filter: contrast(1.08);
+    }
+
+    .room.critical {
+      border-color: rgba(255, 70, 70, 0.45);
+      box-shadow:
+        0 0 40px rgba(255,255,255,0.03) inset,
+        0 0 28px rgba(255,0,0,0.08);
+    }
+
+    .mask {
+      position: fixed;
+      z-index: 1;
+      pointer-events: none;
+      background: #000;
+      opacity: 0.95;
+    }
+
+    .label {
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      color: #8d8d8d;
+      margin-bottom: 10px;
+      transition: opacity 0.2s ease, transform 0.08s linear;
+    }
+
+    .status {
+      white-space: pre-line;
+      font-size: 15px;
+      line-height: 1.8;
+      min-height: 180px;
+      text-shadow: 0 0 10px rgba(255,255,255,0.05);
+      transition: opacity 0.12s linear, transform 0.08s linear;
+    }
+
+    .status.searching::after {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 1em;
+      margin-left: 6px;
+      vertical-align: -0.15em;
+      background: rgba(255,255,255,0.9);
+      animation: caretBlink 0.8s steps(1) infinite;
+    }
+
+    .input-wrap {
+      border-top: 1px solid rgba(255,255,255,0.1);
+      padding-top: 18px;
+      transition: opacity 0.2s ease, transform 0.08s linear;
+    }
+
+    input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 18px;
+      font-family: inherit;
+      padding: 8px 0;
+    }
+
+    input::placeholder {
+      color: #555;
+    }
+
+    .hint {
+      margin-top: 10px;
+      color: #666;
+      font-size: 12px;
+      line-height: 1.7;
+      transition: opacity 0.2s ease;
+    }
+
+    .counter {
+      margin-top: 8px;
+      color: #888;
+      font-size: 13px;
+      transition: color 0.2s ease, opacity 0.2s ease;
+    }
+
+    .counter.danger {
+      color: #ff5a5a;
+    }
+
+    .counter.critical {
+      animation: counterBlink 0.7s steps(1) infinite;
+    }
+
+    .flash {
+      animation: flash 0.18s 2;
+    }
+
+    .ghost {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0;
+      mix-blend-mode: screen;
+    }
+
+    .ghost.active {
+      animation: ghostFlash 0.18s linear 1;
+    }
+
+    .collapse-line {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 10px;
+      white-space: nowrap;
+    }
+
+    .collapse-label {
+      color: #ff6b6b;
+      letter-spacing: 0.06em;
+    }
+
+    .collapse-percent {
+      color: #ffb3b3;
+      min-width: 72px;
+      text-align: right;
+      display: inline-block;
+    }
+
+    @keyframes flash {
+      0% { opacity: 1; }
+      50% { opacity: 0.25; }
+      100% { opacity: 1; }
+    }
+
+    @keyframes caretBlink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+
+    @keyframes counterBlink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0.2; }
+    }
+
+    @keyframes ghostFlash {
+      0% { opacity: 0; }
+      40% { opacity: 0.18; }
+      100% { opacity: 0; }
+    }
+
+    .shutdown-screen {
+      width: 100vw;
+      height: 100vh;
+      background: #0b3dff;
+      color: #efefef;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 40px;
+      font-family: "Courier New", monospace;
+      letter-spacing: 0.04em;
+    }
+
+    .shutdown-screen .line {
+      margin: 8px 0;
+      opacity: 0;
+      animation: fadeLine 0.8s forwards;
+    }
+
+    @keyframes fadeLine {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <canvas class="bg" id="bg"></canvas>
+  <div class="mask" id="mask"></div>
+
+  <main class="room" id="room">
+    <div class="ghost" id="ghost"></div>
+
+    <section>
+      <div class="label" id="label">ROOM / SEARCH INTERFACE</div>
+      <div class="status" id="status">방에 들어왔습니다.
+이름을 입력하세요.</div>
+    </section>
+
+    <section class="input-wrap" id="inputWrap">
+      <input
+        id="nameInput"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        placeholder="정확한 이름만 입력할 수 있습니다"
+      />
+      <div class="hint" id="hint">정확한 이름만 호출할 수 있습니다.
+반복 호출은 흔적을 남깁니다.</div>
+      <div id="counter" class="counter">기록 안정도: 12</div>
+    </section>
+  </main>
+
+  <script>
+    const input = document.getElementById('nameInput');
+    const status = document.getElementById('status');
+    const room = document.getElementById('room');
+    const mask = document.getElementById('mask');
+    const counterEl = document.getElementById('counter');
+    const hintEl = document.getElementById('hint');
+    const ghostEl = document.getElementById('ghost');
+    const labelEl = document.getElementById('label');
+    const inputWrap = document.getElementById('inputWrap');
+
+    let attempts = 0;
+    let remaining = 12;
+    let isDead = false;
+    let shutdownStarted = false;
+    let isSearching = false;
+    let isComposing = false;
+    let glitchTimer = 0;
+    let lastName = '';
+    let searchSeq = 0;
+    let collapsePercent = 100;
+
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const AUDIO_SOURCES = {};
+
+    function cacheEmbeddedAudioSources() {
+      ['audio1', 'audioWar', 'audio7', 'audioShutdown', 'audioAfter', 'audioBaby'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el && el.src) AUDIO_SOURCES[id] = el.src;
+      });
+    }
+
+    function playAudio(id) {
+      if (!AUDIO_SOURCES[id]) cacheEmbeddedAudioSources();
+      const src = AUDIO_SOURCES[id];
+      if (!src) return null;
+      try {
+        const a = new Audio(src);
+        a.preload = 'auto';
+        a.playsInline = true;
+        a.currentTime = 0;
+        a.play().catch(() => {});
+        return a;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function playSequentialAudio(firstId, secondId) {
+      if (!AUDIO_SOURCES[firstId] || !AUDIO_SOURCES[secondId]) cacheEmbeddedAudioSources();
+      const firstSrc = AUDIO_SOURCES[firstId];
+      const secondSrc = AUDIO_SOURCES[secondId];
+      if (!firstSrc) return null;
+      try {
+        const first = new Audio(firstSrc);
+        first.preload = 'auto';
+        first.playsInline = true;
+        first.currentTime = 0;
+        first.onended = () => {
+          if (secondSrc) {
+            try {
+              const second = new Audio(secondSrc);
+              second.preload = 'auto';
+              second.playsInline = true;
+              second.currentTime = 0;
+              second.play().catch(() => {});
+            } catch (e) {}
+          }
+        };
+        first.play().catch(() => {});
+        return first;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function stopAllLayersAndAmbient() {
+      try {
+        layers.forEach((layer) => {
+          try { layer.gain.gain.cancelScheduledValues(audioCtx.currentTime); } catch (e) {}
+          try { layer.gain.gain.setValueAtTime(0, audioCtx.currentTime); } catch (e) {}
+          try { layer.osc.stop(); } catch (e) {}
+          try { layer.lfo.stop(); } catch (e) {}
+        });
+        layers.length = 0;
+      } catch (e) {}
+
+      try {
+        if (lowDroneGain && audioCtx) {
+          lowDroneGain.gain.cancelScheduledValues(audioCtx.currentTime);
+          lowDroneGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        }
+      } catch (e) {}
+
+      try {
+        if (noiseGain && audioCtx) {
+          noiseGain.gain.cancelScheduledValues(audioCtx.currentTime);
+          noiseGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        }
+      } catch (e) {}
+
+      try {
+        if (masterGain && audioCtx) {
+          masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+          masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
+        }
+      } catch (e) {}
+
+      try {
+        if (audioCtx && audioCtx.state === 'running') {
+          audioCtx.suspend().catch(() => {});
+        }
+      } catch (e) {}
+    }
+
+
+    const stageResponses = [
+      '"결과 없음"',
+      '"기록 없음"',
+      '"해당 이름은 확인되지 않습니다"',
+      '"제적소실"',
+      '"검색 대상이 불안정합니다"',
+      '"전사사실 없음"',
+      '"호출 흔적이 누적되고 있습니다"',
+      '"이름이 손상되고 있습니다"',
+      '"더 이상 이름을 조회할 수 없습니다"'
+    ];
+
+    const searchStepsByAttempt = [
+      ['검색 중'],
+      ['검색 중', '기록 확인 중'],
+      ['검색 중', '기록 확인 중', '전사사실 확인 중'],
+      ['검색 중', '전사자 명부 조회중', '전사사실 확인 중'],
+      ['검색 중', '전사자 명부 조회중', '불일치 감지'],
+      ['검색 중', '전사자 명부 조회중', '응답 지연'],
+      ['검색 중', '전사사실 대조 중', '재시도 중'],
+      ['검색 중', '전사사실 대조 중', '불일치 감지', '재시도 중'],
+      ['검색 중', '검색 대상 불안정', '전사사실 확인중', '중단할 수 없습니다'],
+      ['검색 중', '검색 대상 불안정', '시스템 손상 감지', '중단할 수 없습니다'],
+      ['검색 중', '이름 호출 실패', '시스템 손상 감지', '중단할 수 없습니다'],
+      ['검색 중', '이름 호출 실패', '중단 요청 감지', '중단할 수 없습니다']
+    ];
+
+    function isValidKoreanName(text) {
+      return /^[가-힣]{2,}$/.test(text);
+    }
+
+    function damageName(name, level) {
+      if (!name) return '';
+
+      if (level <= 7) return name;
+      if (level === 8) return name.slice(0, Math.max(1, name.length - 1)) + '…';
+      if (level === 9) return name[0] + '…' + name[name.length - 1];
+
+      if (level === 10) {
+        return `${name} / ${name}`;
+      }
+
+      if (level >= 11) {
+        return `${name} / ${name} / ${name}`;
+      }
+
+      return name;
+    }
+
+    function updateCounter() {
+      counterEl.classList.remove('danger', 'critical');
+      room.classList.remove('unstable', 'critical');
+
+      if (remaining >= 4) {
+        counterEl.textContent = `기록층 안정도: ${Math.max(remaining, 0)}`;
+      } else if (remaining === 3) {
+        counterEl.textContent = '시스템 안정도 저하';
+      } else if (remaining === 2) {
+        counterEl.textContent = '기록층 불안정';
+      } else if (remaining === 1) {
+        counterEl.textContent = '붕괴 임계치';
+      } else {
+        counterEl.textContent = '기록층 붕괴';
+      }
+
+      if (remaining <= 3) {
+        counterEl.classList.add('danger');
+        room.classList.add('unstable');
+      }
+
+      if (remaining <= 1) {
+        counterEl.classList.add('critical');
+        room.classList.add('critical');
+      }
+
+      if (remaining <= 4) {
+        hintEl.textContent = '반복 호출은 흔적을 남깁니다.\n한 번 더 입력하면 되돌릴 수 없습니다.';
+      }
+    }
+
+    function setCollapseStatus(percent) {
+      const safePercent = Math.max(0, Math.floor(percent));
+      status.innerHTML = `
+        <span class="collapse-line">
+          <span class="collapse-label">붕괴</span>
+          <span class="collapse-percent">${safePercent}%</span>
+        </span>
+      `;
+    }
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+    let masterGain = null;
+    let noiseGain = null;
+    let lowDroneGain = null;
+    const layers = [];
+
+    function initAudio() {
+      if (!AudioCtx || audioCtx) return;
+
+      audioCtx = new AudioCtx();
+
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = 0.17;
+      masterGain.connect(audioCtx.destination);
+
+      lowDroneGain = audioCtx.createGain();
+      lowDroneGain.gain.value = 0.0;
+      lowDroneGain.connect(masterGain);
+
+      const drone = audioCtx.createOscillator();
+      drone.type = 'sine';
+      drone.frequency.value = 54;
+      drone.connect(lowDroneGain);
+      drone.start();
+
+      const bufferSize = 2 * audioCtx.sampleRate;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = (Math.random() * 2 - 1) * 0.22;
+      }
+
+      const whiteNoise = audioCtx.createBufferSource();
+      whiteNoise.buffer = noiseBuffer;
+      whiteNoise.loop = true;
+
+      const noiseFilter = audioCtx.createBiquadFilter();
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.value = 900;
+      noiseFilter.Q.value = 0.5;
+
+      noiseGain = audioCtx.createGain();
+      noiseGain.gain.value = 0.0;
+
+      whiteNoise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(masterGain);
+      whiteNoise.start();
+    }
+
+    function updateAmbientAudio() {
+      if (!audioCtx || !masterGain) return;
+      const t = audioCtx.currentTime;
+
+      if (lowDroneGain) {
+        const target = attempts >= 6 ? Math.min(0.045, 0.006 * (attempts - 5)) : 0.0;
+        lowDroneGain.gain.cancelScheduledValues(t);
+        lowDroneGain.gain.linearRampToValueAtTime(target, t + 0.6);
+      }
+
+      if (noiseGain) {
+        const target = attempts >= 8 ? Math.min(0.02, 0.004 * (attempts - 7)) : 0.0;
+        noiseGain.gain.cancelScheduledValues(t);
+        noiseGain.gain.linearRampToValueAtTime(target, t + 0.7);
+      }
+    }
+
+    function addLayer() {
+      initAudio();
+      if (!audioCtx || !masterGain) return;
+
+      if (audioCtx.state !== 'running') {
+        audioCtx.resume().catch(() => {});
+      }
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const lfo = audioCtx.createOscillator();
+      const lfoGain = audioCtx.createGain();
+
+      const baseFreqs = [196, 220, 233, 246, 261.6, 277, 293.7, 311, 329.6, 349.2];
+      const idx = Math.floor(Math.random() * baseFreqs.length);
+      const f = baseFreqs[idx];
+
+      osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+      osc.frequency.value = f;
+
+      lfo.frequency.value = 0.08 + idx * 0.015;
+      lfoGain.gain.value = 4 + idx * 0.6;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.detune);
+
+      gain.gain.value = Math.min(0.08 + attempts * 0.01, 0.25);
+
+      osc.connect(gain);
+      gain.connect(masterGain);
+
+      osc.start();
+      lfo.start();
+
+      layers.push({ osc, gain, lfo, lfoGain });
+      updateAmbientAudio();
+    }
+
+    function triggerGhostText(text) {
+      ghostEl.innerHTML = `
+        <div style="
+          position:absolute;
+          left:30px;
+          top:70px;
+          right:30px;
+          color:rgba(255,255,255,0.7);
+          white-space:pre-line;
+          font-size:15px;
+          line-height:1.8;
+          text-shadow:0 0 10px rgba(255,255,255,0.04);
+          transform:translate(2px, 1px);
+        ">${text}</div>
+      `;
+      ghostEl.classList.remove('active');
+      void ghostEl.offsetWidth;
+      ghostEl.classList.add('active');
+    }
+
+    async function runSearchStages(name, seq) {
+      const steps = searchStepsByAttempt[Math.min(attempts - 1, searchStepsByAttempt.length - 1)] || ['검색 중'];
+      const totalDelay = 1100 + attempts * 420;
+      const slice = Math.max(300, Math.floor(totalDelay / steps.length));
+
+      for (let i = 0; i < steps.length; i++) {
+        if (seq !== searchSeq || isDead) return false;
+        status.textContent = `호출된 이름: ${name}\n\n${steps[i]}`;
+        await wait(slice);
+      }
+      return true;
+    }
+
+    async function handleSearch() {
+      if (isDead || isSearching) return;
+
+      const name = input.value.trim();
+      if (!name) return;
+
+      if (!isValidKoreanName(name)) {
+        status.classList.remove('searching');
+        status.textContent = '유효하지 않은 이름입니다.\n완성된 한글 이름 두 글자 이상만 입력할 수 있습니다.';
+        input.value = '';
+        return;
+      }
+
+      initAudio();
+      if (audioCtx && audioCtx.state !== 'running') {
+        audioCtx.resume().catch(() => {});
+      }
+
+      isSearching = true;
+      searchSeq += 1;
+      const seq = searchSeq;
+      lastName = name;
+      attempts += 1;
+      remaining -= 1;
+
+      updateCounter();
+
+      room.classList.remove('flash');
+      void room.offsetWidth;
+      room.classList.add('flash');
+
+      shock += 1.2;
+      disturbance = 1.2;
+      glitchTimer = Math.max(glitchTimer, attempts >= 7 ? 30 : 10);
+
+      status.classList.add('searching');
+      input.value = '';
+      input.disabled = true;
+
+      const ok = await runSearchStages(name, seq);
+      if (!ok) return;
+
+      status.classList.remove('searching');
+
+      if (attempts === 12) {
+        status.textContent = '이름 분리 실패';
+        triggerGhostText(`호출된 이름: ${damageName(name, 11)}\n\n이름 분리 실패`);
+        input.disabled = true;
+        isDead = true;
+        isSearching = false;
+        startShutdown();
+        return;
+      }
+
+      const damaged = damageName(name, attempts);
+      const response = stageResponses[Math.min(attempts - 1, stageResponses.length - 1)];
+
+      let resultText = `호출된 이름: ${damaged}\n\n${response}`;
+
+      if (attempts >= 10) {
+        resultText = `호출된 이름: ${damaged}\n\n${response}\n\n${name}`;
+      }
+
+      status.textContent = resultText;
+
+      if (attempts >= 8) {
+        triggerGhostText(`호출된 이름: ${damaged}\n\n${response}`);
+      }
+
+      addLayer();
+
+      if (attempts === 1) playAudio('audio1');
+      if (attempts === 3) playAudio('audioWar');
+      if (attempts === 6) playAudio('audioWar');
+      if (attempts === 7) playAudio('audio7');
+
+      if (attempts > 6) {
+        mouse.active = false;
+      }
+
+      if (!isDead) {
+        input.disabled = false;
+    input.focus();
+      }
+
+      isSearching = false;
+    }
+
+    input.addEventListener('compositionstart', () => {
+      isComposing = true;
+    });
+
+    input.addEventListener('compositionend', () => {
+      isComposing = false;
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !isComposing) {
+        handleSearch();
+      }
+    });
+
+    input.focus();
+
+    function updateMask() {
+      const rect = room.getBoundingClientRect();
+      mask.style.left = rect.left + 'px';
+      mask.style.top = rect.top + 'px';
+      mask.style.width = rect.width + 'px';
+      mask.style.height = rect.height + 'px';
+    }
+
+    window.addEventListener('resize', updateMask);
+    window.addEventListener('load', updateMask);
+    window.addEventListener('load', cacheEmbeddedAudioSources);
+    setInterval(updateMask, 120);
+
+    const canvas = document.getElementById('bg');
+    const ctx = canvas.getContext('2d');
+
+    let w = 0;
+    let h = 0;
+    let points = [];
+    let disturbance = 0;
+    let collapseTimer = 0;
+    let shock = 0;
+
+    const mouse = {
+      x: 0,
+      y: 0,
+      active: false,
+      vx: 0,
+      vy: 0,
+      prevX: 0,
+      prevY: 0
+    };
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = window.innerWidth;
+      h = window.innerHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      makePoints();
+    }
+
+    function makePoints() {
+      points = [];
+      const gap = 14;
+      for (let y = gap / 2; y < h; y += gap) {
+        for (let x = gap / 2; x < w; x += gap) {
+          points.push({
+            x,
+            y,
+            baseX: x,
+            baseY: y,
+            seed: Math.random() * Math.PI * 2,
+          });
+        }
+      }
+    }
+
+    function draw(t) {
+      const isCollapse = attempts >= 12;
+      if (isCollapse) collapseTimer += 1;
+
+      shock *= 0.93;
+      ctx.clearRect(0, 0, w, h);
+
+      const speedFactor = Math.min(1 + attempts * 0.34, 3.4);
+      let T = t * 0.00055 * speedFactor;
+
+      if (isCollapse) {
+        if (collapseTimer < 42) {
+          T = t * 0.0045;
+        } else {
+          return;
+        }
+      }
+
+      mouse.vx *= 0.97;
+      mouse.vy *= 0.97;
+
+      const roomRect = room.getBoundingClientRect();
+      const centerX = roomRect.left + roomRect.width / 2;
+      const centerY = roomRect.top + roomRect.height / 2;
+
+      for (const p of points) {
+        const wave1 = Math.sin(p.baseY * 0.018 + T * 0.8 + p.seed);
+        const wave2 = Math.sin(p.baseX * 0.015 - T * 0.7 + p.seed * 1.7);
+        const wave3 = Math.sin((p.baseX + p.baseY) * 0.01 + T * 1.1 + p.seed * 0.6);
+
+        let x = p.baseX + wave1 * 2.0 + wave2 * 1.2;
+        let y = p.baseY + wave2 * 2.0 + wave3 * 1.4;
+
+        const drift = Math.sin(p.seed * 10 + T * 0.6) * 0.6;
+        x += drift;
+        y -= drift;
+
+        let size = 0.7 + Math.abs(Math.sin(T * 0.6 + p.seed * 6)) * 0.2 + shock * 0.7;
+        let alpha = 0.08 + Math.abs(Math.sin(x * 0.02 + y * 0.02 + T * 0.9 + p.seed)) * 0.32 + shock * 0.24;
+
+        if (mouse.active && attempts < 7) {
+          const dx = mouse.x - x;
+          const dy = mouse.y - y;
+          const dist2 = dx * dx + dy * dy;
+          const radius = 240;
+          const influence = Math.exp(-dist2 / (radius * radius));
+          const flow = Math.sin((x * 0.01 + y * 0.012) + T * 1.2 + p.seed * 3);
+
+          x += dx * influence * 0.03 + flow * influence * 5 + mouse.vx * influence * 0.6;
+          y += dy * influence * 0.03 - flow * influence * 5 + mouse.vy * influence * 0.6;
+
+          alpha += influence * 0.16;
+          size += influence * 0.25;
+        }
+
+        if (attempts >= 8) {
+          const dxRoom = centerX - x;
+          const dyRoom = centerY - y;
+          const distRoom = Math.sqrt(dxRoom * dxRoom + dyRoom * dyRoom) || 1;
+          const pull = Math.min(0.16, 0.012 * (attempts - 7));
+
+          x += (dxRoom / distRoom) * pull * 16;
+          y += (dyRoom / distRoom) * pull * 16;
+          alpha += pull * 0.6;
+        }
+
+        if (disturbance > 0.001) {
+          const ripple = Math.sin((p.baseX * 0.02 + p.baseY * 0.02) + T * 6 + p.seed);
+          x += ripple * disturbance * 6;
+          y -= ripple * disturbance * 6;
+        }
+
+        if (shock > 0.001) {
+          const s = Math.sin((p.baseX * 0.01 + p.baseY * 0.01) + T * 10 + p.seed * 2);
+          x += s * shock * 9;
+          y -= s * shock * 9;
+        }
+
+        const sClamp = Math.min(1, shock * 0.9 + Math.max(0, attempts - 7) * 0.04);
+        const r = 255;
+        const g = Math.floor(255 * (1 - sClamp));
+        const b = Math.floor(255 * (1 - sClamp));
+
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.globalAlpha = Math.min(alpha, 0.88);
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      disturbance *= 0.96;
+      ctx.globalAlpha = 1;
+
+      if (glitchTimer > 0) {
+        glitchTimer--;
+        if (Math.random() < 0.25) {
+          const dx = (Math.random() - 0.5) * (attempts >= 9 ? 4 : 2);
+          const dy = (Math.random() - 0.5) * 2;
+          room.style.transform = `translate(${dx}px, ${dy}px)`;
+          status.style.transform = `translate(${dx * 0.8}px, 0px)`;
+          labelEl.style.transform = `translate(${dx * 0.5}px, 0px)`;
+          inputWrap.style.transform = `translate(${dx * -0.4}px, 0px)`;
+        } else {
+          room.style.transform = 'translate(0, 0)';
+          status.style.transform = 'translate(0, 0)';
+          labelEl.style.transform = 'translate(0, 0)';
+          inputWrap.style.transform = 'translate(0, 0)';
+        }
+      } else {
+        room.style.transform = 'translate(0, 0)';
+        status.style.transform = 'translate(0, 0)';
+        labelEl.style.transform = 'translate(0, 0)';
+        inputWrap.style.transform = 'translate(0, 0)';
+      }
+
+      if (!isDead) requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('mousemove', (e) => {
+      const mx = e.clientX;
+      const my = e.clientY;
+
+      mouse.vx = (mx - mouse.prevX) * 0.2;
+      mouse.vy = (my - mouse.prevY) * 0.2;
+      mouse.prevX = mx;
+      mouse.prevY = my;
+      mouse.x = mx;
+      mouse.y = my;
+
+      if (attempts < 7) mouse.active = true;
+    });
+
+    window.addEventListener('mouseleave', () => {
+      mouse.active = false;
+    });
+
+    window.addEventListener('resize', resize);
+
+    resize();
+    requestAnimationFrame(draw);
+
+    async function startShutdown() {
+      if (shutdownStarted) return;
+      shutdownStarted = true;
+
+      status.classList.remove('searching');
+      collapsePercent = 100;
+      setCollapseStatus(collapsePercent);
+
+      const collapseSteps = [100, 91, 83, 72, 58, 41, 27, 14, 6, 2, 0];
+
+      for (let i = 1; i < collapseSteps.length; i++) {
+        await wait(i < 4 ? 140 : i < 7 ? 110 : 80);
+        collapsePercent = collapseSteps[i];
+        setCollapseStatus(collapsePercent);
+        glitchTimer = 18 + i * 2;
+        shock += 0.8 + i * 0.12;
+      }
+
+      await wait(220);
+      triggerFinalScreen();
+    }
+
+    function triggerFinalScreen() {
+      document.body.innerHTML = `
+        <div class="shutdown-screen" id="shutdownScreen">
+          <div class="line" style="animation-delay:0.1s;">호출이 중단되었습니다.</div>
+          <div class="line" style="animation-delay:0.7s;">붕괴 0%</div>
+          <div class="line" style="animation-delay:1.3s;">${lastName ? lastName : ''}</div>
+          <button id="retryBtn" style="
+            margin-top:32px;
+            width:140px;
+            padding:14px 18px;
+            background:transparent;
+            color:#efefef;
+            border:1px solid rgba(239,239,239,0.8);
+            font-family:'Courier New', monospace;
+            font-size:16px;
+            letter-spacing:0.08em;
+            cursor:pointer;
+          ">재시도</button>
+        </div>
+      `;
+
+      const retryBtn = document.getElementById('retryBtn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', () => {
+          stopAllLayersAndAmbient();
+          document.body.innerHTML = `
+            <div style="
+              width:100vw;
+              height:100vh;
+              background:#000;
+            "></div>
+          `;
+          
+          const a1 = playAudio('audioShutdown');
+          const a2 = playAudio('audioBaby');
+    
+        }, { once: true });
+      }
+    }
+  </script>
+  <audio id="audio1" preload="auto" src="sounds/audio1.wav"></audio>
+  <audio id="audioWar" preload="auto" src="sounds/audioWar.wav"></audio>
+  <audio id="audio7" preload="auto" src="sounds/audio7.wav"></audio>
+  <audio id="audioShutdown" preload="auto" src="sounds/audioShutdown.wav"></audio>
+  <audio id="audioAfter" preload="auto" src="sounds/audioAfter.wav"></audio>
+  <audio id="audioBaby" preload="auto" src="sounds/audioBaby.wav"></audio>
+</body>
+</html>
